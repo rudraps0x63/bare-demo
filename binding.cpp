@@ -4,111 +4,98 @@
 #include <bare.h>
 #include <js.h>
 
+#define DEBUG
+
+#ifdef DEBUG
+  #define CHECKPT std::cout << __func__ << ":" << __LINE__ << '\n';
+#endif
+
+/**
+ * Comment out line 66 and uncomment line 67. The program again crashes silently.
+ * Initializing data members via constructor is an issue?
+*/
+
 class Test {
+public:
     std::string m_name;
 
-public:
-    Test(char* name)
-    {
-        m_name = name;
-    }
+    /**
+     * PROBLEM: Initializing an object with constructor causes issues
+    */
+    Test(char* name) { m_name = name; }
 
-    void accessName()
+    void accessName() const
     {
-        /**
-         * OK: We don't access any data member
-         */
         std::cout << "Inside: " << __func__ << "!\n";
 
         /**
-         * ERROR: m_name strangely no longer accessible
+         * OK: Accessing data member works
          */
-        std::cout << "Name is: " << m_name << "\n\n";
+        std::cout << "Name is: " << m_name << "\n";
     }
 };
 
-void jsCreateTestObjectCb(js_env_t* env,
-                          js_callback_info_t* info,
-                          js_value_t** jsResult)
+
+js_value_t* jsCreateTestObjectCb(js_env_t* env,
+                                 js_callback_info_t* info)
 {
     size_t jsArgc = 0;
     js_value_t** jsArgv = nullptr;
     js_value_t* jsObject = nullptr;
+    size_t len = 0;
+    utf8_t* str = nullptr;
+
     Test* test = nullptr;
 
-    /* Collect the passed argument passed from JS */
-    js_get_callback_info(env, info, &jsArgc, nullptr, nullptr, nullptr);
-    jsArgv = new js_value_t*[jsArgc];
-    js_get_callback_info(env, info, &jsArgc, jsArgv, nullptr, nullptr);
-
-    /* This block extracts the passed string argument and creates a Test object from it */
     {
-        size_t len = 0;
-        utf8_t* str = nullptr;
+        js_get_callback_info(env, info, &jsArgc, nullptr, nullptr, nullptr);
+        assert(jsArgc == 1);
 
-        /* First call to js_get_value_string_utf8: Get the length of string argument */
-        js_get_value_string_utf8(env, jsArgv[0], nullptr, 0, &len);
-        str = new utf8_t[len + 1];
-        str[len] = '\0';
-
-        /* Second call: Fill variable `str` with the value */
-        js_get_value_string_utf8(env, jsArgv[0], str, len, nullptr);
-
-        /* Create a Test object with extracted string argument */
-        test = new Test(reinterpret_cast<char*>(str));
+        jsArgv = new js_value_t*[jsArgc];
+        js_get_callback_info(env, info, &jsArgc, jsArgv, nullptr, nullptr);
     }
 
-    /**
-     * OK: Works fine for this function call i.e., createTestObject() [index.js:3]
-    */
-    test->accessName();
+    js_get_value_string_utf8(env, jsArgv[0], nullptr, 0, &len);
+    str = new utf8_t[len + 1];
+    str[len] = '\0';
 
-    /* Make the Test object available in JS as well */
-    js_create_external(
-        env,
-        test,
-        [] (js_env_t* env, void* data, void* hint) {
-            delete static_cast<Test*>(data);
-        },
-        nullptr,
-        &jsObject
-    );
+    js_get_value_string_utf8(env, jsArgv[0], str, len, nullptr);
 
-    jsResult = &jsObject;
+    js_create_arraybuffer(env, sizeof(Test), reinterpret_cast<void**>(&test), &jsObject);
+    assert(jsObject);
+
+    test->m_name = reinterpret_cast<char*>(str);
+    // test = new Test(reinterpret_cast<char*>(str));
+
+    return jsObject;
 }
 
 
-void jsAccessNameOfObjectCb(js_env_t* env,
-                            js_callback_info_t* info,
-                            js_value_t** jsResult)
+js_value_t* jsAccessNameOfObjectCb(js_env_t* env,
+                                   js_callback_info_t* info)
 {
     size_t jsArgc = 0;
     js_value_t** jsArgv = nullptr;
     js_value_t* result = nullptr;
-    void* externalData = nullptr;
+    size_t bytes = 0;
     Test* test = nullptr;
 
-    /* Collect the passed argument passed from JS */
     js_get_callback_info(env, info, &jsArgc, nullptr, nullptr, nullptr);
+    assert(jsArgc == 1);
+
     jsArgv = new js_value_t*[jsArgc];
     js_get_callback_info(env, info, &jsArgc, jsArgv, nullptr, nullptr);
 
-    {
-        /* Get the external object passed from JS */
-        js_get_value_external(env, jsArgv[0], &externalData);
-        assert(externalData);
-
-        test = static_cast<Test*>(externalData);
-    }
+    js_get_arraybuffer_info(env, jsArgv[0], reinterpret_cast<void**>(&test), &bytes);
 
     /**
-     * PROBLEM: The member function itself is accessible, but not the
-     * data members of the class object.
+     * OK: Works
     */
     test->accessName();
 
     js_get_undefined(env, &result);
-    jsResult = &result;
+
+    return result;
 }
 
 
@@ -130,5 +117,6 @@ init(js_env_t* env, js_value_t* exports)
 
     return exports;
 }
+
 
 BARE_MODULE(first, init)
